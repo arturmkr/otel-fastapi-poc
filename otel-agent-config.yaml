@@ -1,0 +1,70 @@
+# AGENT: lives close to the application. It batches, buffers, and forwards locally.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # MEMORY LIMITER: rejects/throttles incoming telemetry before Collector runs
+  # out of memory. Put it first in a pipeline.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+
+  # RESOURCE PROCESSOR: adds metadata to the Resource of every signal.
+  # upsert = add collector.agent, or replace it if it already exists.
+  resource/agent:
+    attributes:
+      - key: collector.agent
+        value: local-docker-agent
+        action: upsert
+
+  # BATCH PROCESSOR: groups telemetry before export to reduce network requests.
+  # Flush when 128 items accumulate or after 2 seconds.
+  batch:
+    timeout: 2s
+    send_batch_size: 128
+
+extensions:
+  # file_storage persists the exporter's sending queue on disk. This is the
+  # Collector's WAL-like durability mechanism: queued telemetry survives restart.
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    create_directory: true
+
+exporters:
+  otlp/gateway:
+    # OTLP EXPORTER: forwards all three signals from agent to gateway.
+    endpoint: otel-gateway:4317
+    tls:
+      insecure: true
+
+    # SENDING QUEUE belongs to the exporter, not to processors.
+    # It buffers data while gateway is slow or unavailable.
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+      storage: file_storage
+
+    # RETRY also belongs to the exporter. It retries temporary export failures.
+    retry_on_failure:
+      enabled: true
+
+service:
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/agent, batch]
+      exporters: [otlp/gateway]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/agent, batch]
+      exporters: [otlp/gateway]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/agent, batch]
+      exporters: [otlp/gateway]

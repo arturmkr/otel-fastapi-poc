@@ -1,0 +1,94 @@
+# GATEWAY: central place for processing, tail sampling, and routing.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # 1. Drop noisy health-check spans.
+  filter/drop-health:
+    error_mode: ignore
+    traces:
+      span:
+        - 'attributes["http.route"] == "/health"'
+
+  # 2. Delete a sensitive span attribute and add a small marker.
+  attributes/spans:
+    actions:
+      - key: user.email
+        action: delete
+      - key: processed.by
+        value: gateway
+        action: upsert
+
+  # 3. Add/replace Resource attributes shared by the whole service.
+  resource/common:
+    attributes:
+      - key: deployment.environment.name
+        value: demo
+        action: upsert
+
+  # TAIL SAMPLING: runs in Collector after it receives the complete trace.
+  # Policies are OR'ed: keep every ERROR trace, plus 10% of all other traces.
+  tail_sampling:
+    decision_wait: 2s
+    num_traces: 1000
+    policies:
+      - name: keep-all-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: keep-10-percent
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+
+  batch:
+
+connectors:
+  # CONNECTOR: exporter from traces pipeline + receiver for metrics pipeline.
+  # It converts spans into RED metrics: request count, errors, and duration.
+  spanmetrics:
+    metrics_flush_interval: 5s
+    histogram:
+      explicit:
+        buckets: [10ms, 50ms, 100ms, 250ms, 500ms]
+
+extensions:
+  # HEALTH CHECK: exposes a simple endpoint for Docker/Kubernetes probes.
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  # ZPAGES: exposes lightweight live diagnostic pages for the Collector.
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+exporters:
+  debug:
+    verbosity: detailed
+  prometheus:
+    endpoint: 0.0.0.0:9464
+    enable_open_metrics: true
+
+service:
+  # Extensions are Collector utilities; they are not part of telemetry pipelines.
+  extensions: [health_check, zpages]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [filter/drop-health, attributes/spans, resource/common, tail_sampling, batch]
+      exporters: [debug, spanmetrics]
+
+    metrics:
+      # spanmetrics appears here as a receiver: this is the pipeline connection.
+      receivers: [otlp, spanmetrics]
+      processors: [resource/common, batch]
+      exporters: [debug, prometheus]
+
+    logs:
+      receivers: [otlp]
+      processors: [resource/common, batch]
+      exporters: [debug]

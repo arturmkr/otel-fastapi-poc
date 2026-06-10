@@ -1,0 +1,61 @@
+services:
+  app:
+    build:
+      context: .
+    container_name: otel-fastapi-app
+    environment:
+      OTEL_SERVICE_NAME: hello-fastapi
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-agent:4317
+      # Keep 100% at the head so gateway tail sampling can inspect every trace.
+      # Change to "0.1" to demonstrate client-side 10% head sampling instead.
+      OTEL_HEAD_SAMPLE_RATIO: "1.0"
+      APP_ENV: dev
+    ports:
+      - "8000:8000"
+    depends_on:
+      - otel-agent
+
+  # Agent pattern: applications make short local-network calls to this Collector.
+  otel-agent:
+    image: otel/opentelemetry-collector-contrib:0.154.0
+    container_name: otel-agent
+    # The lab uses root so file_storage can initialize a fresh Docker volume.
+    # In production, pre-create/chown storage for the Collector's non-root UID.
+    user: "0:0"
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-agent-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - otel-agent-storage:/var/lib/otelcol/storage
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - otel-gateway
+
+  # Gateway pattern: agents fan in here for central processing and export.
+  otel-gateway:
+    image: otel/opentelemetry-collector-contrib:0.154.0
+    container_name: otel-gateway
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-gateway-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "9464:9464"
+      - "13133:13133"
+      - "55679:55679"
+
+  prometheus:
+    image: prom/prometheus:v3.11.3
+    container_name: prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--enable-feature=exemplar-storage"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-gateway
+
+volumes:
+  otel-agent-storage:
