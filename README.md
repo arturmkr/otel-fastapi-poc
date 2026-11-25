@@ -170,3 +170,29 @@ checkout_requests_total
 checkout_duration_milliseconds_bucket
 traces_span_metrics_calls_total
 ```
+
+## Minimal Kubernetes HPA Demo
+
+The demo scales the API from one to two Pods when `/work` consumes CPU.
+
+```bash
+kind create cluster --name autoscaling-demo
+docker build -t otel-fastapi-poc:demo .
+kind load docker-image otel-fastapi-poc:demo --name autoscaling-demo
+
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+kubectl patch deployment metrics-server -n kube-system --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
+kubectl apply -f k8s/autoscaling-demo.yaml
+kubectl get hpa,pods -w
+```
+
+In another terminal, start and stop the load:
+
+```bash
+kubectl run load-generator --image=busybox:1.36 --restart=Never --command -- \
+  /bin/sh -c 'for i in $(seq 1 10); do (while true; do wget -q -O- "http://checkout-api/work?duration_ms=500" >/dev/null; done) & done; wait'
+
+kubectl delete pod load-generator
+```

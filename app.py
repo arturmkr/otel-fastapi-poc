@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
@@ -138,6 +139,16 @@ def checkout(
 
 
 @app.get("/health")
-def health():
+async def health():
     # Gateway filter processor drops this noisy health-check trace.
     return {"status": "ok"}
+
+
+@app.get("/work")
+def work(duration_ms: int = Query(200, ge=10, le=1000)):
+    """Burn CPU for a bounded time so Kubernetes HPA has load to react to."""
+    deadline = time.perf_counter() + duration_ms / 1000
+    result = 0
+    while time.perf_counter() < deadline:
+        result = (result * 31 + 7) % 1_000_003
+    return {"status": "done", "duration_ms": duration_ms, "result": result}
