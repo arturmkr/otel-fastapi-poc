@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: otel-fastapi-poc:demo
+          image: arturmkr/otel-fastapi-poc:latest
           imagePullPolicy: Never
           env:
             - name: OTEL_SDK_DISABLED
