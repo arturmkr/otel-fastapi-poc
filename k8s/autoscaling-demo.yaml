@@ -15,7 +15,7 @@ spec:
       containers:
         - name: app
           image: arturmkr/otel-fastapi-poc:latest
-          imagePullPolicy: Never
+          imagePullPolicy: Always
           env:
             - name: OTEL_SDK_DISABLED
               value: "true"
